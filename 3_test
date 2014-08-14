@@ -1,0 +1,1862 @@
+ #include <UTFT.h>                
+ #include <UTouch.h>        
+ #include <EEPROMex.h>
+ #include <dht.h>
+
+    
+
+UTFT myGLCD(ITDB32S,38,39,40,41);  //pins used for TFT
+UTouch  myTouch(6,5,4,3,2);  //pins used for Touch
+    
+//pin humidity
+#define DHT22_PIN A7
+dht DHT;
+
+
+//---- Kalibrasi ---------
+int nilai;
+float kalibrasi = 0;
+float nilaiKalibrasi = 0;
+//---- Kalibrasi ---------
+
+// Timer
+int turningTimerSc = 0, turnRight = 0, turnLeft = 0, turningTimerMnt = 0,
+cancelAlarmTimer = 0, alarmTestTimer = 0, idleSpray = 0, dlTimer = 0;
+
+//---- Humidity -------
+//int portHum = 2;
+int rhsense;
+int RealHum, OldRealHum;
+//---- Humidity -------
+
+//......DHT........
+float TempDhtF, TempDhtC, OldDhtF;
+//......DHT........
+
+//------ Temp Depan -----
+int PT100 = 0;
+
+float Temperature = 0;
+float TemperaturePT100 = 0;
+float jmlRata = 0;
+float   jmlTemp = 0;
+int   jml = 0;
+float TempC = 0;
+float TempF = 0, oldTempF = 0;
+int sampling = 1000;
+float jmlF = 0, jmlC = 0;
+//------ Temp Depan -----
+
+//------ Temp Belakang -----
+int PT100B = 1;
+
+float TemperatureB = 0;
+float TemperaturePT100B = 0;
+float jmlRataB = 0;
+float   jmlTempB = 0;
+int   jmlB = 0;
+float TempCB = 0;
+float TempFB = 0, oldTempFB = 0;
+int samplingB = sampling;
+float jmlFB = 0, jmlCB = 0;
+//------ Temp Depan -----
+
+//------ Setting ------------
+// akan dibaca dari port
+float heatTemp = 0, setPoint = 0, setPointAtas = 0,
+   setPointBawah = 0, lowTemp = 0;
+int setHumBawah = 0, setHumAtas = 0, setHumPoint = 0, setHumPointAtas = 0
+, setHumPointBawah = 0;
+
+//output port
+int Cooler1 = 44, Cooler2 = 48, Spray = 50,
+  Heater1 = 42, Heater2 = 46, Alarm = 8, fanReturn = 53, 
+  alarmCancel = 9, alarmOut = 52;
+
+// ------ Spray ----------
+int jmlTimerSpray = 2, jmlTimer = 0;
+int sprayON = 0, sprayH = 0, sprayL = 0;
+//-------Spray-----------
+
+//----------Status--------
+int spraySt = 0, heater1St = 0, heater2St = 0, cooler1St = 0,
+    cooler2St = 0, fan1St = 0, fan2St = 0, alarmSt = 0, 
+    fanReturnSt = 0, fanFail = 0, turnSt = 0, alarmdlSt = 0
+    ,almDpSt = 0, almBkSt = 0, almHumSt = 0, turningSt = 0, almDisSt = 0
+    , oldHeater1St = 0, oldCooler1St = 0, oldHeater2St = 0, oldCooler2St = 0
+    , oldSpraySt = 0, oldAlmDpSt = 0, oldAlmBkSt = 0, oldAlmHumSt = 0
+    , oldAlarmSt = 0, oldFanFail = 0, oldAlarmCancel = 0;
+    
+    
+float dpn1 = 0, dpn2 =0, blk1 = 0, blk2 = 0, hum1 = 0, hum2 = 0,
+   high1 = 0, high2 = 0, rangeAtas1 = 0, rangeAtas2, rangeBwh1 = 0,
+   rangeBwh2 = 0, low1 = 0, low2 = 0, heat = 0;
+float humLow = 0, humHigh = 0, aFan = 1, bFan = 1, aLrm = 0, 
+    test = 0, dAlm = 0;
+//--------Status-------
+
+//--setting kalibrasi
+float kalibrasiDepan = 0, kalibrasiBlk = 0;
+int kalibrasiHum = 0;
+
+//---setting kalibrasi
+
+//----pilih warna----    
+int color = 0;
+word colorlist[] = {VGA_WHITE, VGA_BLACK, VGA_RED, VGA_BLUE, VGA_GREEN, VGA_FUCHSIA, VGA_YELLOW, VGA_AQUA};
+
+//----pilih font-----
+extern uint8_t BigFont[];        
+extern uint8_t SmallFont[];
+extern uint8_t SevenSegNumFont[];
+extern uint8_t SevenSegmentFull[];
+extern uint8_t Ubuntubold[];
+
+
+//---lokasi EEPROM-----
+int EepromSetpoint = 10;         
+int EepromSetpointHum = 20;       
+int EepromKalDp = 30;     
+int EepromKalBk = 40;
+int EepromKalHum = 50;
+int EepromDisAlm = 60;
+
+int page = 0;
+int x, y;
+
+
+        void setup()
+        {
+          Serial.begin(9600);
+          EepromRead();
+          graphSetup();
+          checkPinMode();
+         
+        }
+         
+         void loop()
+         {
+           
+            graphLoop();
+            // sensor suhu dan humidity
+            checkTempDepan();
+            checkTempBelakang();
+            checkHumidity();
+            
+            // jika spray jalan... lakukan timer
+            //controlSpray();
+            sprayTimer();
+            
+            // controll ada disini
+            posisiTempBawah();
+            posisiTempRange();
+            posisiTempAtas();
+            posisiSpray();
+            delayAlarm();
+            alarmTest();
+            controlAlarm();
+            alarmFanFail();
+            //disableAlarm();
+              
+            // kirim data output ke serial
+            checkStatusOutput();
+            
+            // kirim serial string
+            cetakSerial();
+            
+            signal();
+            delay(1);
+         }
+         
+         
+         
+         void EepromRead()
+        {
+          setPoint = EEPROM.readFloat(EepromSetpoint);
+          setHumPoint = EEPROM.read(EepromSetpointHum);
+          kalibrasiDepan = EEPROM.readFloat(EepromKalDp);
+          kalibrasiBlk = EEPROM.readFloat(EepromKalBk);
+          kalibrasiHum = EEPROM.read(EepromKalHum);
+          
+          heatTemp = setPoint + 0.5; 
+          setPointAtas = setPoint + 0.2;
+          setPointBawah = setPoint - 0.1;
+          lowTemp = setPoint - 0.5;
+            
+          setHumPointBawah = setHumPoint - 2;
+          setHumPointAtas = setHumPoint + 2;
+          setHumAtas = setHumPoint + 10;
+          setHumBawah = setHumPoint - 10;
+          sampling = 1000;
+          samplingB = sampling;
+        }
+        
+        void checkPinMode()
+        {
+          pinMode(Cooler1, OUTPUT);
+          pinMode(Spray, OUTPUT);
+          pinMode(Heater1, OUTPUT);
+          pinMode(Heater2, OUTPUT);
+          pinMode(Cooler2, OUTPUT);
+          pinMode(Alarm, OUTPUT); 
+          pinMode(fanReturn, INPUT);
+          pinMode(alarmCancel, OUTPUT);
+          pinMode(alarmOut,OUTPUT);
+          DHT.read22(DHT22_PIN);
+        }
+
+         
+         void graphSetup()
+         {
+        // Initial setup
+          myGLCD.InitLCD(LANDSCAPE);
+          myGLCD.clrScr();
+          myTouch.InitTouch(LANDSCAPE); //LANDSCAPE
+          myTouch.setPrecision(PREC_HI);
+          mainscr();
+          page = 0;
+        }
+        
+        
+        void checkTempDepan()
+          {
+            
+            TemperaturePT100 = analogRead (PT100);
+            
+            //TemperaturePT100 = (TemperaturePT100 * 0.00488);
+            jml += 1;
+            jmlTemp += TemperaturePT100;
+          
+            if ( jml >= sampling ) 
+            {
+              TempC = 0;
+              TempF = 0;
+              
+              //jmlRata = mode((TF,1000), DEC); 
+              jmlRata = jmlTemp/sampling;
+              TemperaturePT100 = (jmlRata * 0.00488);
+              TempC = (TemperaturePT100 * 27.5);
+              
+              TempF = ((TempC * 9 / 5) + 32);
+          
+              
+                  // Ini kutambahkan karena posisi 0 masih tinggi
+              TempF = TempF - 25 + kalibrasiDepan;
+              
+              if (oldTempF != 0)
+               TempF = (TempF + oldTempF ) / 2;
+               
+               oldTempF = TempF;
+            }
+          }
+          
+          
+          void checkTempBelakang()
+          {
+            
+            TemperaturePT100B = analogRead (PT100B);
+            
+            //TemperaturePT100 = (TemperaturePT100 * 0.00488);
+            jmlB += 1;
+            jmlTempB += TemperaturePT100B;
+          
+            if ( jmlB >= samplingB ) 
+            {
+              TempCB = 0;
+              TempDhtF = 0;
+              
+              //jmlRata = mode((TF,1000), DEC); 
+              jmlRataB = jmlTempB/samplingB;
+              TemperaturePT100B = (jmlRataB * 0.00488);
+              TempCB = (TemperaturePT100B * 27.5);
+              
+              TempDhtF = ((TempCB * 9 / 5) + 32);
+              
+              
+                  // Ini kutambahkan karena posisi 0 masih tinggi
+              TempDhtF = TempDhtF - 25 + kalibrasiBlk;
+              
+              if (oldTempFB != 0)
+                 TempFB = (TempFB + oldTempFB ) / 2;
+                 
+               oldTempFB = TempFB;
+            }
+          }
+          
+          
+          void checkHumidity()
+          {
+            
+            if ( jml >= sampling ) 
+            {
+            DHT.read22(DHT22_PIN);
+            TempDhtC = DHT.temperature;
+            RealHum = DHT.humidity;
+                            
+              RealHum = RealHum - 20 + kalibrasiHum;
+              
+              
+              TempDhtF = ((TempDhtC * 9 / 5) + 32);
+              TempDhtF = TempDhtF + kalibrasiDepan;
+            }
+                         
+          }
+             
+          
+          
+          
+          void cetakSerial()
+          {
+            if ( jml >= sampling ) 
+            {
+             if (page == 0)
+                {
+                  if (TempDhtF >= 0)
+                  {
+                  myGLCD.setFont(SevenSegmentFull);
+                  myGLCD.setColor(VGA_RED);
+                  myGLCD.setBackColor(VGA_BLACK);
+                  myGLCD.printNumF(TempF, 1, 0, 21);
+                  myGLCD.printNumF(TempFB,1 , 0, 92);
+                  }
+                  if (RealHum >= 0)
+                  {
+                  myGLCD.setColor(VGA_RED);
+                  myGLCD.setBackColor(VGA_BLACK);
+                  myGLCD.printNumI(RealHum, 0, 160, 2);
+                  }
+                }
+                
+                jml = 0;
+                jmlTemp = 0;
+                jmlC = 0;
+                jmlF = 0;
+
+                jmlB = 0;
+                jmlTempB = 0;
+                jmlCB = 0;
+                jmlFB = 0;
+                /*
+               Serial.print("Temp SetPoint:   "); Serial.println(setPoint, 1);
+               Serial.print("Kalibrasi Depan:   "); Serial.println(kalibrasiDepan, 1);
+               Serial.print("Kalibrasi Belakang:   "); Serial.println(kalibrasiBlk, 1);
+               Serial.print("Hum Setpoint:   "); Serial.println(setHumPoint);
+               Serial.print("Kalibrasi Hum:   "); Serial.println(kalibrasiHum);
+               Serial.println();
+               Serial.print("heater 1:   "); Serial.println(heater1St);
+               Serial.print("cooler 1:   "); Serial.println(cooler1St);
+               Serial.print("heater 2:   "); Serial.println(heater2St);
+               Serial.print("cooler 2:   "); Serial.println(cooler2St);
+               Serial.print("spray:   "); Serial.println(spraySt);
+               */
+            }  
+          }
+          
+       
+
+        void posisiTempBawah()
+        {
+          // jika posisi temp dibawah setting
+          // nyalakan heater on, cooler off, fan off
+          // Depan
+          if (TempF <= lowTemp)
+          {
+             digitalWrite(Heater1, LOW);
+             digitalWrite(Cooler1, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+          }
+          
+          // Belakang
+          if (TempFB <= lowTemp)
+          {
+             digitalWrite(Heater2, LOW);
+             digitalWrite(Cooler2, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+           }
+         }
+          
+        
+        void posisiTempRange()
+        {
+          // jika posisi temp range
+          // matikan semua
+          //Depan
+          if (TempF >= setPoint)
+          {
+             digitalWrite(Heater1, HIGH);
+             digitalWrite(Cooler1, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             } 
+          }
+          
+          //Belakang
+          if (TempFB >= setPoint)
+          {
+             digitalWrite(Heater2, HIGH);
+             digitalWrite(Cooler2, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+          }
+        
+          //DEPAN
+          if (TempF >= setPointAtas)
+          {
+             digitalWrite(Heater1, HIGH);
+             digitalWrite(Cooler1, LOW);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+           }
+          
+          // Belakang
+          if (TempFB >= setPointAtas)
+          {
+             digitalWrite(Heater2, HIGH);
+             digitalWrite(Cooler2, LOW);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+           }
+          
+          //DEPAN
+            if (TempF <= setPointBawah)
+          {
+             digitalWrite(Heater1, LOW);
+             digitalWrite(Cooler1, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+          }
+          
+          // Belakang
+          if (TempFB <= setPointBawah)
+          {
+             digitalWrite(Heater2, LOW);
+             digitalWrite(Cooler2, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+           }
+         }
+         
+        
+        void posisiTempAtas()
+        {
+          // jika posisi temp diatas setting
+          // nyalakan Cooler, heater off, fan on
+          // Depan
+          if (TempDhtF >= heatTemp)
+          {
+             digitalWrite(Heater1, HIGH);
+             digitalWrite(Cooler1, LOW);
+             digitalWrite(Alarm, HIGH);
+          }
+          
+          // Belakang
+          if (TempFB >= heatTemp)
+          {
+             digitalWrite(Heater2, HIGH);
+             digitalWrite(Cooler2, LOW);
+             digitalWrite(Alarm, HIGH);
+          }
+          }
+            
+        
+        
+        void posisiSpray()
+        {
+          // jika posisi humidity dibawah setting
+          // nyalakan spray
+          //sprayON = 0;
+          if (RealHum >= 0)
+          {          
+            if ((RealHum >= setHumPointBawah) && (RealHum <= setHumPointAtas))
+            {
+             sprayON = 0;
+             //digitalWrite(Spray, LOW);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+        
+          }
+          
+          if (RealHum <= setHumPointBawah)
+          {
+             sprayON = 1;
+             //digitalWrite(Spray, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+        
+          }
+          
+          if (RealHum > setHumPointAtas)
+          {
+             sprayON = 0;
+             //digitalWrite(Spray, LOW);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+          }
+          
+          if (RealHum >= setHumAtas)
+          {
+            sprayON = 0;
+            //digitalWrite(Spray, LOW);
+            digitalWrite (Alarm, HIGH);
+          }
+          
+          
+          if (RealHum <= setHumBawah)
+          {
+            sprayON = 1;
+            //digitalWrite(Spray, HIGH);
+             if (alarmTestTimer == 0) {
+               if (almDpSt == 0){
+                 if (almBkSt == 0) {
+                   if (almHumSt == 0) {
+                     if (fanFail == 0) {
+                     digitalWrite(Alarm, LOW);
+                     }
+                   }
+                 }
+               }
+             }
+          }
+          } 
+        }
+        
+
+
+         void graphLoop()
+         {
+           if (true)
+           {
+             if (myTouch.dataAvailable())
+             
+             {
+               myTouch.read();
+               x=myTouch.getX();
+               y=myTouch.getY();
+               
+               if (page == 0)
+               {
+                 if ((x>=180) && (x<=240))
+                 {
+                   if ((y>=0) && (y<=30))
+                   {
+                     //action for 'SET' button pH
+                     page = 2;
+                     myGLCD.clrScr();
+                     dpSetting();
+                   }
+                   if ((y>=75) && (y<=105))
+                   {
+                     //action for 'SET' button fans.
+                     page = 1;
+                     myGLCD.clrScr();
+                     bkSetting();
+                   }
+                   if ((y>=145) && (y<=175))
+                   {
+                     //action for 'SET' button Tank.
+                     page = 3;
+                     myGLCD.clrScr();
+                     humSetting();
+                   }
+                 }
+                   
+                 if ((y>=214) && (y<=239))
+                 {
+                   if ((x>=0) && (x<=75))
+                   {
+                    aLrm = 1; 
+                   }
+                   
+                   if ((x>=95) && (x<=165))
+                   {
+                    test = 1; 
+                   }
+                 }
+               }
+               
+               if (page == 1)
+               {
+                 if ((x>=165) && (x<=192))
+                 {
+                   if ((y>=131) && (y<=159))
+                    {
+                     //tambah kal depan
+                     IncreaseKalBk();
+                    }
+                   if ((y>=180) && (y<=206))
+                    {
+                     //kurang kal belakang
+                     DecreaseKalBk();
+                    }           
+                 }
+                 if ((x>=235) && (x<=307))
+                 {
+                   if ((y>=42) && (y<=71))
+                   {
+                     //action for 'save' button
+                     page = 0;
+                     //EEPROM.writeFloat(EepromSetpoint, setPoint);
+                     EEPROM.writeFloat(EepromKalBk, kalibrasiBlk);
+                     myGLCD.clrScr();
+                     mainscr();
+                   }
+                 }
+                 if ((x>=207) && (x<=307))
+                 {
+                   if ((y>=155) && (y<=184))
+                   {
+                     //action for 'cancel' button
+                     page = 0;
+                     setPoint = EEPROM.readFloat(EepromSetpoint);
+                     heatTemp = setPoint + 0.5; 
+                      setPointAtas = setPoint + 0.2;
+                      setPointBawah = setPoint - 0.1;
+                      lowTemp = setPoint - 0.5;
+                     kalibrasiBlk = EEPROM.readFloat(EepromKalBk);
+                     myGLCD.clrScr();
+                     mainscr();
+                   }
+                 }
+               }
+               if (page == 2)
+               {
+                 if ((x>=165) && (x<=192))
+                 {
+                   
+                   if ((y>=47) && (y<=75))
+                   {
+                     //tambah Setpoint
+                     IncreaseSetpoint();
+                   }
+                   if ((y>=96) && (y<=122))
+                    {
+                     //kurangi setpoint
+                     DecreaseSetpoint();
+                    }
+                    
+                   if ((y>=131) && (y<=159))
+                    {
+                     //tambah kal depan
+                     IncreaseKalDp();
+                    }
+                   if ((y>=180) && (y<=206))
+                    {
+                     //kurang kal depan
+                     DecreaseKalDp();
+                    }           
+                 }
+                 if ((x>=235) && (x<=307))
+                 {
+                   if ((y>=42) && (y<=71))
+                   {
+                     //action for 'save' button
+                     page = 0;
+                     EEPROM.writeFloat(EepromSetpoint, setPoint);
+                      heatTemp = setPoint + 0.5; 
+                      setPointAtas = setPoint + 0.2;
+                      setPointBawah = setPoint - 0.1;
+                      lowTemp = setPoint - 0.5;
+                     EEPROM.writeFloat(EepromKalDp, kalibrasiDepan);
+                     myGLCD.clrScr();
+                     mainscr();
+                   }
+                 }
+                 if ((x>=207) && (x<=307))
+                 {
+                   if ((y>=155) && (y<=184))
+                   {
+                     //action for 'cancel' button
+                     page = 0;
+                     setPoint = EEPROM.readFloat(EepromSetpoint);
+                      heatTemp = setPoint + 0.5; 
+                      setPointAtas = setPoint + 0.2;
+                      setPointBawah = setPoint - 0.1;
+                      lowTemp = setPoint - 0.5;
+                     kalibrasiDepan = EEPROM.readFloat(EepromKalDp);
+                     myGLCD.clrScr();
+                     mainscr();
+                   }
+                 }
+               }
+               if (page == 3)
+               {
+                 if ((x>=165) && (x<=192))
+                 {
+                   if ((y>=47) && (y<=75))
+                   {
+                     //tambah set point hum
+                     IncreaseSetPointHum();
+                   }
+                   if ((y>=96) && (y<=122))
+                    {
+                     //kurang set point hum
+                     DecreaseSetPointHum();
+                    }
+                   if ((y>=131) && (y<=159))
+                    {
+                     //tambah kalibrasi hum.
+                     IncreaseKalHum();
+                    }
+                   if ((y>=180) && (y<=206))
+                    {
+                     //kurang kalibrasi hum
+                     DecreaseKalHum();
+                    }           
+                 }
+                 if ((x>=235) && (x<=307))
+                 {
+                   if ((y>=42) && (y<=71))
+                   {
+                     //action for 'save' button
+                     page = 0;
+                     EEPROM.write(EepromSetpointHum, setHumPoint);
+                      setHumPointBawah = setHumPoint - 2;
+                      setHumPointAtas = setHumPoint + 2;
+                      setHumAtas = setHumPoint + 10;
+                      setHumBawah = setHumPoint - 10;
+                     EEPROM.write(EepromKalHum, kalibrasiHum);
+                     myGLCD.clrScr();
+                     mainscr();
+                   }
+                 }
+                 if ((x>=207) && (x<=307))
+                 {
+                   if ((y>=155) && (y<=184))
+                   {
+                     //action for 'cancel' button
+                     page = 0;
+                     setHumPoint = EEPROM.read(EepromSetpointHum);
+                      setHumPointBawah = setHumPoint - 2;
+                      setHumPointAtas = setHumPoint + 2;
+                      setHumAtas = setHumPoint + 10;
+                      setHumBawah = setHumPoint - 10;
+                     kalibrasiHum = EEPROM.read(EepromKalHum);
+                     myGLCD.clrScr();
+                     mainscr();
+                   }
+                 }
+               }
+             }
+           }
+         }
+
+         
+        //Mainmenu
+        void mainscr()
+         {
+          myGLCD.fillScr(0, 0, 0);
+          myGLCD.setBackColor (0, 0, 0);
+          
+           myGLCD.setColor(VGA_WHITE);
+           //temp dp
+           myGLCD.drawRoundRect (0, 8, 176, 73);
+           myGLCD.drawRoundRect (1, 9, 175, 72);
+           //temp bk
+           myGLCD.drawRoundRect (0, 83, 176, 144);
+           myGLCD.drawRoundRect (1, 84, 175, 143);
+           //hum
+           myGLCD.drawRoundRect (0, 153, 176, 211);
+           myGLCD.drawRoundRect (1, 154, 175, 210);
+           //setpoint
+           myGLCD.drawRoundRect (180, 35, 245, 70);
+           myGLCD.drawRoundRect (180, 110, 245, 140);
+           
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(VGA_YELLOW);
+          myGLCD.setBackColor (VGA_BLACK);
+          myGLCD.print("TEMP DEPAN", 0, 0);
+          myGLCD.print("TEMP BLK", 0, 75);
+          myGLCD.print("HUMIDITY", 0, 145);
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(VGA_WHITE);
+          myGLCD.setBackColor (VGA_BLACK);
+          myGLCD.print("F", 159, 30); //degree celcius
+          myGLCD.print("F", 159, 110); //degree celcius
+          myGLCD.print("%", 130, 175); //Percent
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor(0, 0, 255);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (180, 0, 240, 30);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("SET", 185, 7); //set temp depan
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (180, 75, 240, 105);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("SET", 185, 82); //set temp belakang
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (180, 145, 240, 175);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("SET", 185, 152); //set humidity
+          
+          myGLCD.setColor(VGA_RED);
+          myGLCD.setBackColor(VGA_BLACK);
+          myGLCD.printNumF(setPoint,1, 181, 43);
+          
+          myGLCD.setColor(VGA_RED);
+          myGLCD.setBackColor(VGA_BLACK);
+          myGLCD.printNumI(setHumPoint, 181, 115);
+                    
+          myGLCD.setFont(SmallFont);
+          myGLCD.setColor(VGA_GREEN);
+          myGLCD.fillRoundRect (0, 214, 75, 239);
+          myGLCD.setBackColor(VGA_GREEN);
+          myGLCD.setColor(VGA_WHITE);
+          myGLCD.print("CANCEL", 13, 222); 
+          
+          myGLCD.setColor(VGA_RED);
+          myGLCD.fillRoundRect (95, 214, 165, 239);
+          myGLCD.setBackColor(VGA_RED);
+          myGLCD.setColor(VGA_WHITE);
+          myGLCD.print("TEST", 115, 222);
+          
+          
+            oldHeater1St = 0;
+            oldCooler1St = 0;
+            oldHeater2St = 0;
+            oldCooler2St = 0;
+            oldSpraySt = 0;
+            oldAlmDpSt = 0;
+            oldAlmBkSt = 0;
+            oldAlmHumSt = 0;
+            oldAlarmSt = 0;
+            oldFanFail = 0;
+            oldAlarmCancel = 0;
+  
+            setPoint = EEPROM.readFloat(EepromSetpoint);
+            setHumPoint = EEPROM.read(EepromSetpointHum);
+            kalibrasiDepan = EEPROM.readFloat(EepromKalDp);
+            kalibrasiBlk = EEPROM.readFloat(EepromKalBk);
+            kalibrasiHum = EEPROM.read(EepromKalHum);
+
+            heatTemp = setPoint + 0.5;
+            setPointAtas = setPoint + 0.2;
+            setPointBawah = setPoint - 0.1;
+            lowTemp = setPoint - 0.5;
+
+            setHumPointBawah = setHumPoint - 2;
+            setHumPointAtas = setHumPoint + 2;
+            setHumAtas = setHumPoint + 10;
+            setHumBawah = setHumPoint - 10;
+            sampling = 1000;
+            samplingB = sampling;
+                  
+         }
+         
+         //page 1
+         void bkSetting()
+         {
+          myGLCD.fillScr(0, 0, 0);
+          myGLCD.setBackColor (0, 0, 0);
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.print("SET POINT", 0, 35);
+          myGLCD.print("KALIBRASI", 0, 120);
+          myGLCD.print("F", 140, 79);
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.print("SETTING TEMP BLK", CENTER, 0);
+         
+          myGLCD.setFont(SevenSegmentFull);
+          myGLCD.setColor(VGA_RED);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.printNumF(setPoint,1, 0, 55); //set point 
+
+          myGLCD.setColor(VGA_RED);
+          myGLCD.printNumF(kalibrasiBlk,1, 0, 140); //kalibrasi
+         
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor(0, 0, 255);
+          
+         
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 131, 192, 159);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("+", 170, 137);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 180, 192, 206);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("-", 170, 186);
+          myGLCD.setColor(255, 255, 0);
+          myGLCD.drawLine(177, 162, 177, 179);
+          myGLCD.drawLine(178, 162, 178, 179);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (235, 42, 307, 71);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("Save", 240, 49);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (207, 155, 307, 184);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("Cancel", 210, 162);
+         }
+         
+         
+         //page 2
+         void dpSetting()
+         {
+          myGLCD.fillScr(0, 0, 0);
+          myGLCD.setBackColor (0, 0, 0);
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.print("SET POINT", 0, 35);
+          myGLCD.print("KALIBRASI", 0, 120);
+          myGLCD.print("F", 140, 79);
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.print("SETTING TEMP DEPAN", CENTER, 0);
+         
+          
+          myGLCD.setFont(SevenSegmentFull);
+          myGLCD.setColor(VGA_RED);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.printNumF(setPoint,1, 0, 55); //set point 
+
+          myGLCD.setColor(VGA_RED);
+          myGLCD.printNumF(kalibrasiDepan,1, 0, 140); //kalibrasi depan
+         
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor(0, 0, 255);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 47, 192, 75);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("+", 170, 53);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 96, 192, 122);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("-", 170, 102);
+         
+         
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 131, 192, 159);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("+", 170, 137);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 180, 192, 206);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("-", 170, 186);
+          myGLCD.setColor(255, 255, 0);
+          myGLCD.drawLine(177, 78, 177, 95);
+          myGLCD.drawLine(178, 78, 178, 95);
+          myGLCD.drawLine(177, 162, 177, 179);
+          myGLCD.drawLine(178, 162, 178, 179);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (235, 42, 307, 71);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("Save", 240, 49);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (207, 155, 307, 184);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("Cancel", 210, 162);
+         }
+         
+         //page 3
+         void humSetting()
+         {
+          myGLCD.fillScr(0, 0, 0);
+          myGLCD.setBackColor (0, 0, 0);
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.print("SET POINT", 0, 35);
+          myGLCD.print("KALIBRASI", 0, 120);
+          myGLCD.print("%", 140, 79);
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.print("SETTING HUMIDITY", CENTER, 0);
+         
+          myGLCD.setFont(SevenSegmentFull);
+          myGLCD.setColor(VGA_RED);
+          myGLCD.setBackColor (0, 0, 0);
+          myGLCD.printNumI(setHumPoint, 0, 55); //set point 
+
+          myGLCD.setColor(VGA_RED);
+          myGLCD.printNumI(kalibrasiHum, 0, 140); //kalibrasi
+         
+         
+          myGLCD.setFont(BigFont);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.setBackColor(0, 0, 255);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 47, 192, 75);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("+", 170, 53);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 96, 192, 122);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("-", 170, 102);
+         
+         
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 131, 192, 159);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("+", 170, 137);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (165, 180, 192, 206);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("-", 170, 186);
+          myGLCD.setColor(255, 255, 0);
+          myGLCD.drawLine(177, 78, 177, 95);
+          myGLCD.drawLine(178, 78, 178, 95);
+          myGLCD.drawLine(177, 162, 177, 179);
+          myGLCD.drawLine(178, 162, 178, 179);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (235, 42, 307, 71);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("Save", 240, 49);
+          myGLCD.setColor(0, 0, 255);
+          myGLCD.fillRoundRect (207, 155, 307, 184);
+          myGLCD.setColor(255, 255, 255);
+          myGLCD.print("Cancel", 210, 162);
+          }
+
+
+        void IncreaseSetpoint()
+        {
+        setPoint = setPoint + 0.1;
+          if (setPoint >= 100.0)
+          {
+            setPoint = 100.0;
+          }
+          if (page == 2)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumF(setPoint, 1, 0, 55);
+          }
+        }
+
+
+        void DecreaseSetpoint()
+        {
+        setPoint = setPoint - 0.1;
+          if (setPoint <= 0.0)
+          {
+            setPoint = 0.0;
+          }
+          if (page == 2)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumF(setPoint, 1, 0, 55);
+          }
+        }
+
+
+        void IncreaseKalDp()
+        {
+        kalibrasiDepan = kalibrasiDepan + 0.1;
+          if (kalibrasiDepan >= 100.0)
+          {
+            kalibrasiDepan = 100.0;
+          }
+          if (page == 2)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumF(kalibrasiDepan, 1, 0, 140);
+          }
+        }
+
+
+        void DecreaseKalDp()
+        {
+        kalibrasiDepan = kalibrasiDepan - 0.1;
+          if (kalibrasiDepan <= 0.0)
+          {
+            kalibrasiDepan = 0.0;
+          }
+          if (page == 2)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumF(kalibrasiDepan, 1, 0, 140);
+          }
+        }
+
+
+        void IncreaseKalBk()
+        {
+        kalibrasiBlk = kalibrasiBlk + 0.1;
+          if (kalibrasiBlk >= 100.0)
+          {
+            kalibrasiBlk = 100.0;
+          }
+          if (page == 1)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumF(kalibrasiBlk, 1, 0, 140);
+          }
+        }
+
+
+        void DecreaseKalBk()
+        {
+        kalibrasiBlk = kalibrasiBlk - 0.1;
+          if (kalibrasiBlk <= 0.0)
+          {
+            kalibrasiBlk = 0.0;
+          }
+          if (page == 1)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumF(kalibrasiBlk, 1, 0, 140);
+          }
+        }
+
+
+        void IncreaseSetPointHum()
+        {
+        setHumPoint = setHumPoint + 1;
+          if (setHumPoint >= 99)
+          {
+            setHumPoint = 99;
+          }
+          if (page == 3)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumI(setHumPoint, 0, 55);
+          }
+        }
+
+
+        void DecreaseSetPointHum()
+        {
+        setHumPoint = setHumPoint - 1;
+          if (setHumPoint <= 0)
+          {
+            setHumPoint = 0;
+          }
+          if (page == 3)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumI(setHumPoint, 0, 55);
+          }
+        }
+
+
+        void IncreaseKalHum()
+        {
+        kalibrasiHum = kalibrasiHum + 1;
+          if (kalibrasiHum >= 100)
+          {
+            kalibrasiHum = 100;
+          }
+          if (page == 3)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumI(kalibrasiHum, 0, 140);
+          }
+        }
+
+
+        void DecreaseKalHum()
+        {
+        kalibrasiHum = kalibrasiHum - 1;
+          if (kalibrasiHum <= 0)
+          {
+            kalibrasiHum = 0;
+          }
+          if (page == 3)
+          {
+            myGLCD.setFont(SevenSegmentFull);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.setBackColor (0, 0, 0);
+            myGLCD.printNumI(kalibrasiHum, 0, 140);
+          }
+        }
+
+
+          void sprayTimer()
+          {
+            if (sprayON == 1)
+            {
+              jmlTimer++;
+              if (jmlTimer >= jmlTimerSpray)
+              {
+                if (digitalRead(Spray) == LOW)
+                { 
+                  sprayL = 0;
+                  sprayH += 1;
+                  if (sprayH >= 100){
+                  digitalWrite(Spray, HIGH); 
+                  }
+                }
+                else
+                { 
+                  sprayL += 1;
+                  if (sprayL >= 100) {
+                  digitalWrite(Spray, LOW);
+                  sprayH = 0;}
+                }
+                jmlTimer = 0;
+
+               }
+              }
+            else {
+              digitalWrite(Spray, HIGH);
+              jmlTimer = 0; 
+              sprayH = 0;
+              sprayL = 0;
+            }
+          }
+          
+          /*
+          void controlSpray()
+          {
+             idleSpray += 1;
+           if (idleSpray >= 1000)
+           {
+             Spray = 53;
+             digitalWrite(10, LOW);
+           }
+           else { digitalWrite (53, LOW); }
+          } */
+          
+          
+          void checkStatusOutput()
+          {
+            //aktifkan fanfailure
+            digitalWrite (fanReturn, HIGH);
+            
+            spraySt = digitalRead(Spray);
+            heater1St = digitalRead(Heater1); 
+            heater2St = digitalRead(Heater2);
+            cooler1St = digitalRead(Cooler1);
+            cooler2St = digitalRead(Cooler2);
+            alarmSt = digitalRead(Alarm);
+            alarmdlSt = digitalRead(alarmCancel);
+            //turnSt = digitalRead(Turn);
+            fanReturnSt = digitalRead(fanReturn);  
+            
+            if (fanReturnSt == HIGH) {     
+              fanFail = 1;  
+            } 
+            else {
+              fanFail = 0; 
+            }
+            
+            if (EEPROM.read(17) == 26)
+            {
+              almDisSt = 1;
+            }
+            if (EEPROM.read(17) == 10)
+            {
+              almDisSt = 0;
+            }
+            
+            //sinyal alarm depan
+            if (TempF >= heatTemp) {
+               almDpSt = 1;
+            }
+            else almDpSt = 0;
+            
+            //sinyal alarm belakang
+            if (TempFB >= heatTemp) {
+                almBkSt = 1;
+            }
+            else almBkSt = 0;
+            
+            //sinyal alarm humidity
+            if (RealHum >= 0) {
+            if (RealHum >= setHumAtas) {
+                almHumSt = 1;
+            }
+            else almHumSt = 0;
+            }
+            
+          }
+          
+          
+          void signal()
+          {
+            if (page == 0)
+            {
+            if (heater1St == 0)
+            {
+            if (oldHeater1St == 0) 
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.fillRoundRect (280, 0, 318, 30);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 0, 318, 30);
+            myGLCD.setBackColor(VGA_RED);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("H1", 285, 7);
+            oldHeater1St = 1;
+            }
+            }
+            
+            if (heater1St == 1)
+            {
+            if (oldHeater1St == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (280, 0, 318, 30);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 0, 318, 30);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("H1", 285, 7);
+            oldHeater1St = 0;
+            }
+            }
+            
+            if (cooler1St == 0)
+            {
+            if (oldCooler1St == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLUE);
+            myGLCD.fillRoundRect (280, 50, 318, 80);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 50, 318, 80);
+            myGLCD.setBackColor(VGA_BLUE);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("C1", 285, 57);
+            oldCooler1St = 1;
+            }
+            }
+            
+            if (cooler1St == 1)
+            {
+            if (oldCooler1St == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (280, 50, 318, 80);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 50, 318, 80);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("C1", 285, 57);
+            oldCooler1St = 0;
+            }
+            }
+            
+            if (heater2St == 0)
+            {
+            if (oldHeater2St == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.fillRoundRect (280, 100, 318, 130);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 100, 318, 130);
+            myGLCD.setBackColor(VGA_RED);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("H2", 285, 107);
+            oldHeater2St = 1;
+            }
+            }
+            
+            if (heater2St == 1)
+            {
+            if (oldHeater2St == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (280, 100, 318, 130);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 100, 318, 130);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("H2", 285, 107);
+            oldHeater2St = 0;
+            }
+            }
+            
+            if (cooler2St == 0)
+            {
+            if (oldCooler2St == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLUE);
+            myGLCD.fillRoundRect (280, 150, 318, 180);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 150, 318, 180);
+            myGLCD.setBackColor(VGA_BLUE);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("C2", 285, 157);
+            oldCooler2St = 1;
+            }
+            }
+            
+            if (cooler2St == 1)
+            {
+            if (oldCooler2St == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (280, 150, 318, 180);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 150, 318, 180);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("C2", 285, 157);
+            oldCooler2St = 0;
+            }
+            }
+            
+            if (sprayON == 1)
+            {
+            if (oldSpraySt == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_AQUA);
+            myGLCD.fillRoundRect (280, 200, 318, 230);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 200, 318, 230);
+            myGLCD.setBackColor(VGA_AQUA);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.print("SP", 285, 207);
+            oldSpraySt = 1;
+            }
+            }
+            
+            if (sprayON == 0)
+            {
+            if (oldSpraySt == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (280, 200, 318, 230);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.drawRoundRect (280, 200, 318, 230);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("SP", 285, 207);
+            oldSpraySt = 0;
+            }
+            }
+            
+            if (almDpSt == 1)
+            {
+            if (oldAlmDpSt == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.fillRoundRect (250, 40, 270, 80);
+            myGLCD.setBackColor(VGA_RED);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("!", 255, 50);
+            oldAlmDpSt = 1;
+            }
+            }
+            
+            if (almDpSt == 0)
+            {
+            if (oldAlmDpSt == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (250, 40, 270, 80);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.print("!", 255, 50);
+            oldAlmDpSt = 0;
+            }
+            }
+            
+            
+            if (almBkSt == 1)
+            {
+            if (oldAlmBkSt == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.fillRoundRect (250, 110, 270, 150);
+            myGLCD.setBackColor(VGA_RED);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("!", 255, 120);
+            oldAlmBkSt = 1;
+            }
+            }
+            
+            if (almBkSt == 0)
+            {
+            if (oldAlmBkSt == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (250, 110, 270, 150);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.print("!", 255, 120);
+            oldAlmBkSt = 0;
+            }
+            }
+            
+            
+            if (almHumSt == 1)
+            {
+            if (oldAlmHumSt == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.fillRoundRect (250, 180, 270, 220);
+            myGLCD.setBackColor(VGA_RED);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("!", 255, 190);
+            oldAlmHumSt = 1;
+            }
+            }
+            
+            if (almHumSt == 0)
+            {
+            if (oldAlmHumSt == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (250, 180, 270, 220);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.print("!", 255, 190);
+            oldAlmHumSt = 0;
+            }
+            }
+            
+            
+            if (fanFail == 1)
+            {
+            if (oldFanFail == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.fillCircle (210, 210, 30);
+            myGLCD.setBackColor(VGA_RED);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("FAN", 185, 200);
+            oldFanFail = 1;
+            }
+            }
+            
+            if (fanFail == 0)
+            {
+            if (oldFanFail == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillCircle (210, 210, 30);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.print("FAN", 185, 200);
+            oldFanFail = 0;
+            }
+            }     
+            
+            if (alarmSt == 1)
+            {
+            if (oldAlarmSt == 0)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_RED);
+            myGLCD.print("AL", 245, 7);
+            oldAlarmSt = 1;
+            }
+            }
+            
+            if (alarmSt == 0)
+            {
+            if (oldAlarmSt == 1)
+            {
+            myGLCD.setFont(BigFont);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.print("AL", 245 , 7);
+            oldAlarmSt = 0;
+            }
+            } 
+ 
+            if (alarmdlSt == 1)
+            {
+            if (oldAlarmCancel == 0)
+            {
+            myGLCD.setFont(SmallFont);
+            myGLCD.setColor(VGA_BLACK);
+            myGLCD.fillRoundRect (0, 214, 75, 239);
+            myGLCD.setBackColor(VGA_BLACK);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("CANCEL", 13, 222);
+            oldAlarmCancel = 1;
+            }
+            }
+            
+            if (alarmdlSt == 0)
+            {
+            if (oldAlarmCancel == 1)
+            {
+            myGLCD.setFont(SmallFont);
+            myGLCD.setColor(VGA_GREEN);
+            myGLCD.fillRoundRect (0, 214, 75, 239);
+            myGLCD.setBackColor(VGA_GREEN);
+            myGLCD.setColor(VGA_WHITE);
+            myGLCD.print("CANCEL", 13, 222);
+            oldAlarmCancel = 0;
+            }
+            } 
+            
+          }
+          }
+          
+          
+          //alarm cancel
+            void delayAlarm()
+            {
+                if (aLrm == 1) {
+            	digitalWrite(alarmCancel, HIGH);
+                }
+            }
+              
+            
+            
+            void controlAlarm()
+            {
+              int statusAlarm = digitalRead(Alarm);
+              int statusCancel = digitalRead(alarmCancel);
+              int statusOut = digitalRead(alarmOut);
+
+            if (cancelAlarmTimer >= 30000) {
+                dlTimer += 1;
+                cancelAlarmTimer = 0;
+                cancelAlarmTimer += 1;
+                if (dlTimer >= 31) { 
+                digitalWrite (alarmCancel, LOW);
+                statusCancel = 0;
+                cancelAlarmTimer = 0;
+                dlTimer = 0;
+                aLrm = 0;
+                 }
+              }
+
+              if (statusAlarm == 1) {
+                if (statusCancel == 1) {
+                  digitalWrite(alarmOut, HIGH);
+                  cancelAlarmTimer += 1;
+                }
+                else if (statusCancel == 0) {
+                  digitalWrite(alarmOut, LOW);
+                }
+              }
+                if (statusAlarm == 0) {
+                  if (statusCancel == 1) {
+                    digitalWrite(alarmOut, HIGH);
+                    cancelAlarmTimer += 1;
+                }
+                else if (statusCancel == 0) {
+                    cancelAlarmTimer = 0;
+                    statusCancel = 0;
+                    aLrm = 0;
+                    digitalWrite (alarmOut, HIGH);
+                }
+              }
+  
+              if ((TempF >= setPoint) && (TempF <= setPointAtas))
+                {
+                  if ((TempFB >= setPoint) && (TempFB <= setPointAtas))
+                    {
+                    digitalWrite (alarmCancel, LOW);
+                    statusCancel = 0;
+                    cancelAlarmTimer = 0;
+                    dlTimer = 0;
+                    aLrm = 0;
+                }
+              }
+            }
+            
+            
+            void alarmTest()
+            {
+              if (test == 1) {
+                digitalWrite (Alarm, HIGH);
+                alarmTestTimer += 1;
+              }
+              
+              if (alarmTestTimer >= 60) {
+                alarmTestTimer = 0;
+                test = 0;
+                digitalWrite (Alarm, LOW);
+              }
+            }
+            
+            
+            void alarmFanFail()
+            {
+              if (fanFail == 1)
+              {
+                digitalWrite(Alarm, HIGH);
+              }
+              if (fanFail == 0)
+              {
+                if (alarmTestTimer == 0) {
+                   if (almDpSt == 0){
+                     if (almBkSt == 0) {
+                       if (almHumSt == 0) {
+                         digitalWrite(Alarm, LOW);
+                       }
+                     }
+                   }
+                 }
+              }
+            }
+            
+            
+            /*
+            void disableAlarm()
+            {
+              
+              if (EEPROM.read(17) == 26)
+              {
+                alarmOut = 26;
+              }
+              if (EEPROM.read(17) == 10)
+              {
+                alarmOut = 10;
+              }
+             
+              if (alarmOut == 26)
+              {
+                digitalWrite (10, LOW);
+              }
+              else { digitalWrite (26, LOW);
+              }
+              /*
+                if (dAlm == 1) {
+                    alarmOut = 26;
+                }
+                else if (dAlm == 0) {
+                    alarmOut = 10;
+               }
+            } */
